@@ -1,0 +1,27 @@
+import io:*
+import str:*
+
+fun READ(a: str): str {
+    return a
+}
+
+fun EVAL(a: str): str {
+    return a
+}
+
+fun PRINT(a: str): str {
+    return a
+}
+
+fun rep(a: str): str {
+    return a
+}
+
+fun main(argc: int, argv: **char): int {
+    while (true) {
+        var line = get_line(str("user> "), 1024)
+        if (line.length() == 0)
+            break
+        println(rep(line))
+    }
+}
