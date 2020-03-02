@@ -14,7 +14,7 @@ fun PRINT(a: str): str {
 }
 
 fun rep(a: str): str {
-    return a
+    return PRINT(EVAL(READ(a)))
 }
 
 fun main(argc: int, argv: **char): int {

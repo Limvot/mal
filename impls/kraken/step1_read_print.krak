@@ -1,0 +1,167 @@
+import io:*
+import str:*
+import vec:*
+import util:*
+
+fun tokenize(s: str): vec<str> {
+    var to_ret = vec<str>()
+    for (var i = 0; i < s.length(); i++;) {
+        if (s[i] == ' ' || s[i] == '\t' || s[i] == ',') {
+            i++
+            while (i < s.length() && (s[i] == ' ' || s[i] == '\t' || s[i] == ',')) {
+                i++;
+            }
+            i--
+        } else if (i+1 < s.length() && s[i] == '~' && s[i+1] == '@') {
+            to_ret.add(str("~@"))
+            i++
+        } else if ( s[i] == '[' || s[i] == ']' || s[i] == '{' || s[i] == '}' || s[i] == '(' || s[i] == ')' || s[i] == '\'' || s[i] == '`' || s[i] == '~' || s[i] == '^' || s[i] == '@') { // '
+            to_ret.add(str(s[i]))
+        } else if (s[i] == ';') {
+            var next_tok = str(s[i])
+            i++
+            while (i < s.length() && (s[i] != '\n')) {
+                next_tok += s[i]
+                i++
+            }
+            to_ret.add(next_tok)
+            i--
+        } else {
+            var next_tok = str(s[i])
+            i++
+            while (i < s.length() && !( s[i] == ' ' || s[i] == '\t' || s[i] == ',' || s[i] == '[' || s[i] == ']' || s[i] == '{' || s[i] == '}' || s[i] == '(' || s[i] == ')' || s[i] == '\'' || s[i] == '`' || s[i] == '~' || s[i] == '^' || s[i] == '@' || s[i] == ';')) { // '
+                next_tok += s[i]
+                i++
+            }
+            to_ret.add(next_tok)
+            i--
+        }
+    }
+    return to_ret
+}
+
+
+fun read_form(tokens: *vec<str>, i: *int): MalResult {
+    if ((*tokens)[*i] == "(") {
+        return read_list(tokens, i)
+    } else {
+        return read_atom(tokens, i)
+    }
+}
+fun read_list(tokens: *vec<str>, i: *int): MalResult {
+    var to_ret = vec<MalValue>()
+    (*i)++;
+    while (*i < tokens->size && (*tokens)[*i] != ")") {
+        var result = read_form(tokens, i)
+        if (is_err(result)) {
+            return result
+        }
+        to_ret.add(get_value(result))
+    }
+    if (*i == tokens->size) {
+        return MalResult::Error(str("unmatched ("))
+    }
+    (*i)++;
+    return MalResult::Value(MalValue::List(to_ret))
+}
+fun read_atom(tokens: *vec<str>, i: *int): MalResult {
+    var all_num = true
+    var token = (*tokens)[*i]
+    (*i)++
+    for (var j = 0; j < token.length(); j++;) {
+        all_num = all_num && token[j] >= '0' && token[j] <= '9'
+    }
+    if (all_num) {
+        return MalResult::Value(MalValue::Int(string_to_num<int>(token)))
+    } else {
+        return MalResult::Value(MalValue::Symbol(token))
+    }
+}
+fun read_str(s: str): MalResult {
+    var tokens = tokenize(s)
+    var i = 0
+    return read_form(&tokens, &i)
+}
+adt MalValue {
+    List: vec<MalValue>,
+    Int: int,
+    Symbol: str
+}
+adt MalResult {
+    Value: MalValue,
+    Error: str
+}
+fun is_err(r: MalResult): bool {
+    match (r) {
+        MalResult::Error(e) {
+            return true
+        }
+    }
+    return false
+}
+fun get_err(r: MalResult): str {
+    match (r) {
+        MalResult::Error(e) {
+            return e
+        }
+    }
+    return str("not error")
+}
+fun get_value(r: MalResult): MalValue {
+    match (r) {
+        MalResult::Value(v) {
+            return v
+        }
+    }
+    return MalValue::Symbol(str("error"))
+}
+fun pr_str(v: MalValue): str {
+    match (v) {
+        MalValue::List(l) {
+            var to_ret = str("(")
+            for (var i = 0; i < l.size; i++;) {
+                if (i != 0) {
+                    to_ret += " "
+                }
+                to_ret += pr_str(l[i])
+            }
+            return to_ret + ")"
+        }
+        MalValue::Int(i) {
+            return to_string(i)
+        }
+        MalValue::Symbol(s) {
+            return s
+        }
+    }
+}
+
+fun READ(s: str): MalResult {
+    return read_str(s)
+}
+
+fun EVAL(v: MalValue): MalValue {
+    return v
+}
+
+fun PRINT(v: MalValue): str {
+    return pr_str(v)
+}
+
+fun rep(a: str): str {
+    var read = READ(a)
+    if is_err(read) {
+        return get_err(read)
+    } else {
+        return PRINT(EVAL(get_value(read)))
+    }
+}
+
+fun main(argc: int, argv: **char): int {
+    while (true) {
+        var line = get_line(str("user> "), 1024)
+        if (line.length() == 0)
+            break
+        println(rep(line))
+    }
+}
