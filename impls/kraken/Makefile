@@ -9,6 +9,7 @@ mal: stepA_mal
 
 %: %.krak
 	~/kraken/kraken $*.krak
+	rm $*.krak.c
 
 .PHONY: clean
 
