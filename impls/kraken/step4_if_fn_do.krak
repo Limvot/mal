@@ -99,6 +99,29 @@ adt MalValue {
     False,
     Nil
 }
+fun equals_MalValue(a: MalValue, b: MalValue): bool {
+    match (a) {
+       MalValue::List(d) { match (b) { MalValue::List(db) {
+            if d.size != db.size {
+                return false
+            }
+            for (var i = 0; i < d.size; i++;) {
+                if !equals_MalValue(d[i], db[i]) {
+                    return false
+                }
+            }
+            return true
+       } } }
+       MalValue::Int(d) { match (b) { MalValue::Int(db) { return d == db; } } }
+       MalValue::Symbol(d) { match (b) { MalValue::Symbol(db) { return d == db; } } }
+       MalValue::Function(d) { match (b) { MalValue::Function(db) { return d == db; } } }
+       MalValue::BuiltinFunction(d) { match (b) { MalValue::BuiltinFunction(db) { return d == db; } } }
+       MalValue::True() { match (b) { MalValue::True() { return true; } } }
+       MalValue::False() { match (b) { MalValue::False() { return true; } } }
+       MalValue::Nil() { match (b) { MalValue::Nil() { return true; } } }
+    }
+    return false
+}
 fun is_list(v: MalValue): bool {
     match (v) {
         MalValue::List(l) {
@@ -139,6 +162,30 @@ fun get_symbol_text(v: MalValue): str {
     }
     error("get_symbol_text on not symbol")
 }
+fun is_int(v: MalValue): bool {
+    match (v) {
+        MalValue::Int(i) {
+            return true
+        }
+    }
+    return false
+}
+fun get_int(v: MalValue): int {
+    match (v) {
+        MalValue::Int(i) {
+            return i
+        }
+    }
+    error("get_int on not an int")
+}
+fun is_nil(v: MalValue): bool {
+    match (v) {
+        MalValue::Nil() {
+            return true
+        }
+    }
+    return false
+}
 fun is_truthy(v: MalValue): bool {
     match (v) {
         MalValue::False() {
@@ -149,6 +196,13 @@ fun is_truthy(v: MalValue): bool {
         }
     }
     return true
+}
+fun bool_to_MalValue(b: bool): MalValue {
+    if b {
+        return MalValue::True()
+    } else {
+        return MalValue::False()
+    }
 }
 
 obj Env (Object) {
@@ -210,6 +264,9 @@ obj MalBuiltinFunction (Object) {
         destruct()
         copy_construct(&other)
     }
+    fun operator==(other: ref MalBuiltinFunction):bool {
+        return false
+    }
     fun call(params: vec<MalValue>): MalResult {
         return fp(params)
     }
@@ -244,6 +301,10 @@ obj MalFunction (Object) {
     fun operator=(other:ref MalFunction):void {
         destruct()
         copy_construct(&other)
+    }
+    fun operator==(other: ref MalFunction):bool {
+        // not sure about env
+        return env == other.env && parameters == other.parameters && equals_MalValue(*body, *other.body)
     }
     fun call(params: vec<MalValue>): MalResult {
         if parameters.size != params.size {
@@ -285,7 +346,7 @@ fun get_value(r: MalResult): MalValue {
     }
     return MalValue::Symbol(str("error"))
 }
-fun pr_str(v: MalValue): str {
+fun pr_str(v: MalValue, print_readably: bool): str {
     match (v) {
         MalValue::List(l) {
             var to_ret = str("(")
@@ -293,7 +354,7 @@ fun pr_str(v: MalValue): str {
                 if (i != 0) {
                     to_ret += " "
                 }
-                to_ret += pr_str(l[i])
+                to_ret += pr_str(l[i], print_readably)
             }
             return to_ret + ")"
         }
@@ -451,7 +512,7 @@ fun EVAL(env: *Env, ast: MalValue): MalResult {
 }
 
 fun PRINT(v: MalValue): str {
-    return pr_str(v)
+    return pr_str(v, true)
 }
 
 fun rep(env: *Env, a: str): str {
@@ -479,7 +540,7 @@ fun main(argc: int, argv: **char): int {
                     continue
                 }
             }
-            return MalResult::Err(str("called + with not an int: ") + pr_str(params[i]))
+            return MalResult::Err(str("called + with not an int: ") + pr_str(params[i], false))
         }
         return MalResult::Ok(MalValue::Int(to_ret))
     }));
@@ -496,7 +557,7 @@ fun main(argc: int, argv: **char): int {
                     continue
                 }
             }
-            return MalResult::Err(str("called - with not an int: ") + pr_str(params[i]))
+            return MalResult::Err(str("called - with not an int: ") + pr_str(params[i], false))
         }
         return MalResult::Ok(MalValue::Int(to_ret))
     }));
@@ -509,7 +570,7 @@ fun main(argc: int, argv: **char): int {
                     continue
                 }
             }
-            return MalResult::Err(str("called * with not an int: ") + pr_str(params[i]))
+            return MalResult::Err(str("called * with not an int: ") + pr_str(params[i], false))
         }
         return MalResult::Ok(MalValue::Int(to_ret))
     }));
@@ -526,9 +587,77 @@ fun main(argc: int, argv: **char): int {
                     continue
                 }
             }
-            return MalResult::Err(str("called / with not an int: ") + pr_str(params[i]))
+            return MalResult::Err(str("called / with not an int: ") + pr_str(params[i], false))
         }
         return MalResult::Ok(MalValue::Int(to_ret))
+    }));
+    env->set(str("prn"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size == 0 {
+            return MalResult::Err(str("Called prn with 0 parameters"))
+        }
+        println(pr_str(params[0], true))
+        return MalResult::Ok(MalValue::Nil())
+    }));
+    env->set(str("list"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        return MalResult::Ok(MalValue::List(params))
+    }));
+    env->set(str("list?"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size > 0 && (is_list(params[0]) || is_nil(params[0])) {
+            return MalResult::Ok(MalValue::True())
+        } else {
+            return MalResult::Ok(MalValue::False())
+        }
+    }));
+    env->set(str("empty?"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size == 0 || (!is_list(params[0]) && !is_nil(params[0])) {
+            return MalResult::Err(str("first parameter is not a list"))
+        } else {
+            return MalResult::Ok(bool_to_MalValue(is_nil(params[0]) || get_list(params[0]).size == 0))
+        }
+    }));
+    env->set(str("count"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size == 0 || (!is_list(params[0]) && !is_nil(params[0])) {
+            return MalResult::Err(str("first parameter is not a list"))
+        } else if is_nil(params[0]) {
+            return MalResult::Ok(MalValue::Int(0))
+        } else {
+            return MalResult::Ok(MalValue::Int(get_list(params[0]).size))
+        }
+    }));
+    env->set(str("="), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 2 {
+            return MalResult::Err(str("= with not two parameters"))
+        } else {
+            return MalResult::Ok(bool_to_MalValue(equals_MalValue(params[0], params[1])))
+        }
+    }));
+    env->set(str("<"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 2 || !is_int(params[0]) || !is_int(params[1]) {
+            return MalResult::Err(str("< with not two numbers"))
+        } else {
+            return MalResult::Ok(bool_to_MalValue(get_int(params[0]) < get_int(params[1])))
+        }
+    }));
+    env->set(str("<="), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 2 || !is_int(params[0]) || !is_int(params[1]) {
+            return MalResult::Err(str("<= with not two numbers"))
+        } else {
+            return MalResult::Ok(bool_to_MalValue(get_int(params[0]) <= get_int(params[1])))
+        }
+    }));
+    env->set(str(">"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 2 || !is_int(params[0]) || !is_int(params[1]) {
+            return MalResult::Err(str("> with not two numbers"))
+        } else {
+            return MalResult::Ok(bool_to_MalValue(get_int(params[0]) > get_int(params[1])))
+        }
+    }));
+    env->set(str(">="), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 2 || !is_int(params[0]) || !is_int(params[1]) {
+            return MalResult::Err(str(">= with not two numbers"))
+        } else {
+            return MalResult::Ok(bool_to_MalValue(get_int(params[0]) >= get_int(params[1])))
+        }
     }));
     while (true) {
         var line = get_line(str("user> "), 1024)
