@@ -70,7 +70,7 @@ fun read_atom(tokens: *vec<str>, i: *int): MalResult {
     var token = (*tokens)[*i]
     (*i)++
     for (var j = 0; j < token.length(); j++;) {
-        all_num = all_num && ((j == 0 && token[j] == '-') || token[j] >= '0' && token[j] <= '9')
+        all_num = all_num && ((j == 0 && token[j] == '-' && token.length() > 1) || token[j] >= '0' && token[j] <= '9')
     }
     if (all_num) {
         return MalResult::Ok(MalValue::Int(string_to_num<int>(token)))
