@@ -1,0 +1,539 @@
+import io:*
+import str:*
+import vec:*
+import util:*
+import map:*
+
+fun tokenize(s: str): vec<str> {
+    var to_ret = vec<str>()
+    for (var i = 0; i < s.length(); i++;) {
+        if (s[i] == ' ' || s[i] == '\t' || s[i] == ',') {
+            i++
+            while (i < s.length() && (s[i] == ' ' || s[i] == '\t' || s[i] == ',')) {
+                i++;
+            }
+            i--
+        } else if (i+1 < s.length() && s[i] == '~' && s[i+1] == '@') {
+            to_ret.add(str("~@"))
+            i++
+        } else if ( s[i] == '[' || s[i] == ']' || s[i] == '{' || s[i] == '}' || s[i] == '(' || s[i] == ')' || s[i] == '\'' || s[i] == '`' || s[i] == '~' || s[i] == '^' || s[i] == '@') { // '
+            to_ret.add(str(s[i]))
+        } else if (s[i] == ';') {
+            var next_tok = str(s[i])
+            i++
+            while (i < s.length() && (s[i] != '\n')) {
+                next_tok += s[i]
+                i++
+            }
+            to_ret.add(next_tok)
+            i--
+        } else {
+            var next_tok = str(s[i])
+            i++
+            while (i < s.length() && !( s[i] == ' ' || s[i] == '\t' || s[i] == ',' || s[i] == '[' || s[i] == ']' || s[i] == '{' || s[i] == '}' || s[i] == '(' || s[i] == ')' || s[i] == '\'' || s[i] == '`' || s[i] == '~' || s[i] == '^' || s[i] == '@' || s[i] == ';')) { // '
+                next_tok += s[i]
+                i++
+            }
+            to_ret.add(next_tok)
+            i--
+        }
+    }
+    return to_ret
+}
+
+
+fun read_form(tokens: *vec<str>, i: *int): MalResult {
+    if ((*tokens)[*i] == "(") {
+        return read_list(tokens, i)
+    } else {
+        return read_atom(tokens, i)
+    }
+}
+fun read_list(tokens: *vec<str>, i: *int): MalResult {
+    var to_ret = vec<MalValue>()
+    (*i)++;
+    while (*i < tokens->size && (*tokens)[*i] != ")") {
+        var result = read_form(tokens, i)
+        if (is_err(result)) {
+            return result
+        }
+        to_ret.add(get_value(result))
+    }
+    if (*i == tokens->size) {
+        return MalResult::Err(str("unmatched ("))
+    }
+    (*i)++;
+    return MalResult::Ok(MalValue::List(to_ret))
+}
+fun read_atom(tokens: *vec<str>, i: *int): MalResult {
+    var all_num = true
+    var token = (*tokens)[*i]
+    (*i)++
+    for (var j = 0; j < token.length(); j++;) {
+        all_num = all_num && ((j == 0 && token[j] == '-' && token.length() > 1) || token[j] >= '0' && token[j] <= '9')
+    }
+    if (all_num) {
+        return MalResult::Ok(MalValue::Int(string_to_num<int>(token)))
+    } else if (token == "true") {
+        return MalResult::Ok(MalValue::True())
+    } else if (token == "false") {
+        return MalResult::Ok(MalValue::False())
+    } else if (token == "nil") {
+        return MalResult::Ok(MalValue::Nil())
+    } else {
+        return MalResult::Ok(MalValue::Symbol(token))
+    }
+}
+fun read_str(s: str): MalResult {
+    var tokens = tokenize(s)
+    var i = 0
+    return read_form(&tokens, &i)
+}
+adt MalValue {
+    List: vec<MalValue>,
+    Int: int,
+    Symbol: str,
+    Function: MalFunction,
+    BuiltinFunction: MalBuiltinFunction,
+    True,
+    False,
+    Nil
+}
+fun is_list(v: MalValue): bool {
+    match (v) {
+        MalValue::List(l) {
+            return true
+        }
+    }
+    return false
+}
+fun get_list(v: MalValue): vec<MalValue> {
+    match (v) {
+        MalValue::List(l) {
+            return l
+        }
+    }
+    error("Tried to get list on not a list")
+}
+fun is_symbol(v: MalValue): bool {
+    match (v) {
+        MalValue::Symbol(s) {
+            return true
+        }
+    }
+    return false
+}
+fun is_symbol(v: MalValue, text: *char): bool {
+    match (v) {
+        MalValue::Symbol(s) {
+            return s == text
+        }
+    }
+    return false
+}
+fun get_symbol_text(v: MalValue): str {
+    match (v) {
+        MalValue::Symbol(s) {
+            return s
+        }
+    }
+    error("get_symbol_text on not symbol")
+}
+fun is_truthy(v: MalValue): bool {
+    match (v) {
+        MalValue::False() {
+            return false
+        }
+        MalValue::Nil() {
+            return false
+        }
+    }
+    return true
+}
+
+obj Env (Object) {
+    var data: map<str, MalValue>
+    var outer: *Env
+    fun construct(): *Env {
+        return construct(null<Env>())
+    }
+    fun construct(outer: *Env): *Env {
+        data.construct()
+        this->outer = outer
+        return this
+    }
+    fun copy_construct(old: *Env): void {
+        data.copy_construct(&old->data)
+        outer = old->outer
+    }
+    fun destruct(): void {
+        data.destruct()
+        outer = null<Env>()
+    }
+    fun operator=(other:ref Env):void {
+        destruct()
+        copy_construct(&other)
+    }
+    fun set(key: str, val: MalValue) {
+        data.set(key, val)
+    }
+    fun find(key: str): *Env {
+        if (data.contains_key(key)) {
+            return this
+        } else if (outer != null<Env>()) {
+            return outer->find(key)
+        } else {
+            return null<Env>()
+        }
+    }
+    fun get(key: str): MalResult {
+        var env = find(key)
+        if (env != null<Env>()) {
+            return MalResult::Ok(env->data.get(key))
+        } else {
+            return MalResult::Err(str("") + key + " not found")
+        }
+    }
+}
+obj MalBuiltinFunction (Object) {
+    var fp: fun(vec<MalValue>): MalResult
+    fun construct(fp: fun(vec<MalValue>): MalResult): *MalBuiltinFunction {
+        this->fp = fp
+        return this
+    }
+    fun copy_construct(old: *MalBuiltinFunction): void {
+        this->fp = old->fp
+    }
+    fun destruct(): void {
+    }
+    fun operator=(other:ref MalBuiltinFunction):void {
+        destruct()
+        copy_construct(&other)
+    }
+    fun call(params: vec<MalValue>): MalResult {
+        return fp(params)
+    }
+}
+fun make_builtin_function(f: fun(vec<MalValue>): MalResult): MalValue {
+    var to_ret.construct(f): MalBuiltinFunction
+    return MalValue::BuiltinFunction(to_ret)
+}
+obj MalFunction (Object) {
+    var env: *Env
+    var parameters: vec<str>
+    var body: *MalValue
+    fun construct(env: *Env, parameters: vec<str>, body: MalValue): *MalFunction {
+        this->env = env
+        this->parameters.copy_construct(&parameters)
+        this->body = new<MalValue>()
+        this->body->copy_construct(&body)
+        return this
+    }
+    fun copy_construct(old: *MalFunction): void {
+        this->env = old->env
+        this->parameters.copy_construct(&old->parameters)
+        this->body = new<MalValue>()
+        this->body->copy_construct(old->body)
+    }
+    fun destruct(): void {
+        this->env = null<Env>()
+        parameters.destruct()
+        delete(body)
+        body = null<MalValue>()
+    }
+    fun operator=(other:ref MalFunction):void {
+        destruct()
+        copy_construct(&other)
+    }
+    fun call(params: vec<MalValue>): MalResult {
+        if parameters.size != params.size {
+            return MalResult::Err(str("called with the wrong number of parameters"))
+        }
+        var new_env = new<Env>()->construct(env)
+        for (var i = 0; i < parameters.size; i++;) {
+            new_env->set(parameters[i], params[i])
+        }
+        return EVAL(new_env, *body)
+    }
+}
+
+adt MalResult {
+    Ok: MalValue,
+    Err: str
+}
+fun is_err(r: MalResult): bool {
+    match (r) {
+        MalResult::Err(e) {
+            return true
+        }
+    }
+    return false
+}
+fun get_err(r: MalResult): str {
+    match (r) {
+        MalResult::Err(e) {
+            return e
+        }
+    }
+    return str("not error")
+}
+fun get_value(r: MalResult): MalValue {
+    match (r) {
+        MalResult::Ok(v) {
+            return v
+        }
+    }
+    return MalValue::Symbol(str("error"))
+}
+fun pr_str(v: MalValue): str {
+    match (v) {
+        MalValue::List(l) {
+            var to_ret = str("(")
+            for (var i = 0; i < l.size; i++;) {
+                if (i != 0) {
+                    to_ret += " "
+                }
+                to_ret += pr_str(l[i])
+            }
+            return to_ret + ")"
+        }
+        MalValue::Int(i) {
+            return to_string(i)
+        }
+        MalValue::Symbol(s) {
+            return s
+        }
+        MalValue::BuiltinFunction(f) {
+            return str("builtin function")
+        }
+        MalValue::Function(f) {
+            return str("function")
+        }
+        MalValue::True() {
+            return str("true")
+        }
+        MalValue::False() {
+            return str("false")
+        }
+        MalValue::Nil() {
+            return str("nil")
+        }
+    }
+    return str("can't print")
+}
+
+fun READ(s: str): MalResult {
+    return read_str(s)
+}
+
+fun eval_ast(env: *Env, ast: MalValue): MalResult {
+    match (ast) {
+        MalValue::List(l) {
+            var to_ret = vec<MalValue>()
+            for (var i = 0; i < l.size; i++;) {
+                var mid = EVAL(env, l[i])
+                if is_err(mid) {
+                    return mid
+                }
+                to_ret.add(get_value(mid))
+            }
+            return MalResult::Ok(MalValue::List(to_ret))
+        }
+        MalValue::Symbol(s) {
+            return env->get(s)
+        }
+    }
+    return MalResult::Ok(ast)
+}
+
+fun EVAL(env: *Env, ast: MalValue): MalResult {
+    match (ast) {
+        MalValue::List(l) {
+            if (l.size == 0) {
+                return MalResult::Ok(ast)
+            } if (is_symbol(l[0], "def!")) {
+                if (l.size != 3) {
+                    return MalResult::Err(str("def! without exaclty key and value"))
+                }
+                if (!is_symbol(l[1])) {
+                    return MalResult::Err(str("def! not on symbol"))
+                }
+                var value = EVAL(env, l[2])
+                if (is_err(value)) {
+                    return value
+                }
+                env->set(get_symbol_text(l[1]), get_value(value))
+                return value
+            } if (is_symbol(l[0], "let*")) {
+                if (l.size != 3) {
+                    return MalResult::Err(str("let* without list of bindings & end value"))
+                }
+                if (!is_list(l[1])) {
+                    return MalResult::Err(str("let* without list of bindings"))
+                }
+                var bindings = get_list(l[1])
+                if (bindings.size & 1 != 0) {
+                    return MalResult::Err(str("let* list of bindings has odd number of entries"))
+                }
+                var new_env = new<Env>()->construct(env)
+                for (var i = 0; i < bindings.size; i+=2;) {
+                    if (!is_symbol(bindings[i])) {
+                        return MalResult::Err(str("let* var name not symbol"))
+                    }
+                    var to_set_value = EVAL(new_env, bindings[i+1])
+                    if (is_err(to_set_value)) {
+                        return to_set_value
+                    }
+                    new_env->set(get_symbol_text(bindings[i]), get_value(to_set_value))
+                }
+                return EVAL(new_env, l[2])
+            } if (is_symbol(l[0], "do")) {
+                for (var i = 1; i < l.size; i++;) {
+                    var mid = EVAL(env, l[i])
+                    if is_err(mid) {
+                        return mid
+                    }
+                    if i == l.size-1 {
+                        return mid
+                    }
+                }
+            } if (is_symbol(l[0], "if")) {
+                if l.size != 3 && l.size != 4 {
+                    return MalResult::Err(str("if needs 2 or 3 children"))
+                }
+                var cond = EVAL(env, l[1])
+                if is_err(cond) {
+                    return cond
+                }
+                if is_truthy(get_value(cond)) {
+                    return EVAL(env, l[2])
+                } else if l.size == 4 {
+                    return EVAL(env, l[3])
+                } else {
+                    return MalResult::Ok(MalValue::Nil())
+                }
+            } if (is_symbol(l[0], "fn*")) {
+                if l.size != 3 {
+                    return MalResult::Err(str("fn* needs 2 children"))
+                }
+                if (!is_list(l[1])) {
+                    return MalResult::Err(str("fn* without list of parameters"))
+                }
+                var parameters = get_list(l[1])
+                var parameters_str = vec<str>()
+                for (var i = 0; i < parameters.size; i++;) {
+                    if (!is_symbol(parameters[i])) {
+                        return MalResult::Err(str("fn* parameter name not symbol"))
+                    }
+                    parameters_str.add(get_symbol_text(parameters[i]))
+                }
+                var to_ret.construct(env, parameters_str, l[2]): MalFunction
+                return MalResult::Ok(MalValue::Function(to_ret))
+            } else {
+                var mid = eval_ast(env, ast)
+                if is_err(mid) {
+                    return mid
+                }
+                var to_call = get_list(get_value(mid))
+                match (to_call[0]) {
+                    MalValue::BuiltinFunction(f) {
+                        return f.call(to_call.slice(1,-1))
+                    }
+                    MalValue::Function(f) {
+                        return f.call(to_call.slice(1,-1))
+                    }
+                }
+                return MalResult::Err(str("trying to call not a function"))
+            }
+        }
+    }
+    return eval_ast(env, ast)
+}
+
+fun PRINT(v: MalValue): str {
+    return pr_str(v)
+}
+
+fun rep(env: *Env, a: str): str {
+    var read = READ(a)
+    if is_err(read) {
+        return get_err(read)
+    } else {
+        var evaled = EVAL(env, get_value(read))
+        if is_err(evaled) {
+            return get_err(evaled)
+        } else {
+            return PRINT(get_value(evaled))
+        }
+    }
+}
+
+fun main(argc: int, argv: **char): int {
+    var env = new<Env>()->construct()
+    env->set(str("+"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        var to_ret = 0
+        for (var i = 0; i < params.size; i++;) {
+            match (params[i]) {
+                MalValue::Int(v) {
+                    to_ret += v
+                    continue
+                }
+            }
+            return MalResult::Err(str("called + with not an int: ") + pr_str(params[i]))
+        }
+        return MalResult::Ok(MalValue::Int(to_ret))
+    }));
+    env->set(str("-"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        var to_ret = 0
+        for (var i = 0; i < params.size; i++;) {
+            match (params[i]) {
+                MalValue::Int(v) {
+                    if (i == 0) {
+                        to_ret += v
+                    } else {
+                        to_ret -= v
+                    }
+                    continue
+                }
+            }
+            return MalResult::Err(str("called - with not an int: ") + pr_str(params[i]))
+        }
+        return MalResult::Ok(MalValue::Int(to_ret))
+    }));
+    env->set(str("*"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        var to_ret = 1
+        for (var i = 0; i < params.size; i++;) {
+            match (params[i]) {
+                MalValue::Int(v) {
+                    to_ret *= v
+                    continue
+                }
+            }
+            return MalResult::Err(str("called * with not an int: ") + pr_str(params[i]))
+        }
+        return MalResult::Ok(MalValue::Int(to_ret))
+    }));
+    env->set(str("/"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        var to_ret = 1
+        for (var i = 0; i < params.size; i++;) {
+            match (params[i]) {
+                MalValue::Int(v) {
+                    if (i == 0) {
+                        to_ret *= v
+                    } else {
+                        to_ret /= v
+                    }
+                    continue
+                }
+            }
+            return MalResult::Err(str("called / with not an int: ") + pr_str(params[i]))
+        }
+        return MalResult::Ok(MalValue::Int(to_ret))
+    }));
+    while (true) {
+        var line = get_line(str("user> "), 1024)
+        if (line.length() == 0)
+            break
+        println(rep(env, line))
+    }
+}
