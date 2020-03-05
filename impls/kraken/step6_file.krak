@@ -1,15 +1,16 @@
 import io:*
 import str:*
 import vec:*
+import vec_literals:*
 import util:*
 import map:*
 
 fun tokenize(s: str): vec<str> {
     var to_ret = vec<str>()
     for (var i = 0; i < s.length(); i++;) {
-        if (s[i] == ' ' || s[i] == '\t' || s[i] == ',') {
+        if (s[i] == ' ' || s[i] == '\t' || s[i] == ',' || s[i] == '\n') {
             i++
-            while (i < s.length() && (s[i] == ' ' || s[i] == '\t' || s[i] == ',')) {
+            while (i < s.length() && (s[i] == ' ' || s[i] == '\t' || s[i] == ',' || s[i] == '\n')) {
                 i++;
             }
             i--
@@ -25,7 +26,6 @@ fun tokenize(s: str): vec<str> {
                 next_tok += s[i]
                 i++
             }
-            to_ret.add(next_tok)
             i--
         } else if (s[i] == '"') {
             var str_start = i
@@ -49,7 +49,7 @@ fun tokenize(s: str): vec<str> {
         } else {
             var next_tok = str(s[i])
             i++
-            while (i < s.length() && !( s[i] == ' ' || s[i] == '\t' || s[i] == ',' || s[i] == '[' || s[i] == ']' || s[i] == '{' || s[i] == '}' || s[i] == '(' || s[i] == ')' || s[i] == '\'' || s[i] == '`' || s[i] == '~' || s[i] == '^' || s[i] == '@' || s[i] == ';')) { // '
+            while (i < s.length() && !( s[i] == ' ' || s[i] == '\t' || s[i] == ',' || s[i] == '\n' || s[i] == '[' || s[i] == ']' || s[i] == '{' || s[i] == '}' || s[i] == '(' || s[i] == ')' || s[i] == '\'' || s[i] == '`' || s[i] == '~' || s[i] == '^' || s[i] == '@' || s[i] == ';')) { // '
                 next_tok += s[i]
                 i++
             }
@@ -66,6 +66,13 @@ fun read_form(tokens: *vec<str>, i: *int): MalResult {
         return read_list(tokens, i, (*tokens)[*i] == "[")
     } else if ((*tokens)[*i] == "{") {
         return read_dict(tokens, i)
+    } else if ((*tokens)[*i] == "@") {
+        (*i)++;
+        var inner = read_form(tokens, i)
+        if (is_err(inner)) {
+            return inner
+        }
+        return MalResult::Ok(MalValue::List(vec(MalValue::Symbol(str("deref")), get_value(inner))))
     } else {
         return read_atom(tokens, i)
     }
@@ -182,7 +189,8 @@ adt MalValue {
     Vector: vec<MalValue>,
     Map: map<str, MalValue>,
     Function: MalFunction,
-    BuiltinFunction: MalBuiltinFunction
+    BuiltinFunction: MalBuiltinFunction,
+    Atom: *MalValue
 }
 fun equals_MalValue(a: MalValue, b: MalValue): bool {
     match (a) {
@@ -224,6 +232,7 @@ fun equals_MalValue(a: MalValue, b: MalValue): bool {
        MalValue::Keyword(d) { match (b) { MalValue::Keyword(db) { return d == db; } } }
        MalValue::Function(d) { match (b) { MalValue::Function(db) { return d == db; } } }
        MalValue::BuiltinFunction(d) { match (b) { MalValue::BuiltinFunction(db) { return d == db; } } }
+       MalValue::Atom(d) { match (b) { MalValue::Atom(db) { return d == db; } } }
        MalValue::True() { match (b) { MalValue::True() { return true; } } }
        MalValue::False() { match (b) { MalValue::False() { return true; } } }
        MalValue::Nil() { match (b) { MalValue::Nil() { return true; } } }
@@ -268,6 +277,28 @@ fun get_list(v: MalValue): vec<MalValue> {
     }
     error("Tried to get list on not a list")
 }
+fun is_list_or_vec(v: MalValue): bool {
+    match (v) {
+        MalValue::List(l) {
+            return true
+        }
+        MalValue::Vector(v) {
+            return true
+        }
+    }
+    return false
+}
+fun get_list_or_vec(v: MalValue): vec<MalValue> {
+    match (v) {
+        MalValue::List(l) {
+            return l
+        }
+        MalValue::Vector(v) {
+            return v
+        }
+    }
+    error("Tried to get list or vec on not a list or vec")
+}
 fun is_symbol(v: MalValue): bool {
     match (v) {
         MalValue::Symbol(s) {
@@ -292,6 +323,22 @@ fun get_symbol_text(v: MalValue): str {
     }
     error("get_symbol_text on not symbol")
 }
+fun is_string(v: MalValue): bool {
+    match (v) {
+        MalValue::String(s) {
+            return true
+        }
+    }
+    return false
+}
+fun get_string(v: MalValue): str {
+    match (v) {
+        MalValue::String(s) {
+            return s
+        }
+    }
+    error("get_string on not a string")
+}
 fun is_int(v: MalValue): bool {
     match (v) {
         MalValue::Int(i) {
@@ -315,6 +362,22 @@ fun is_nil(v: MalValue): bool {
         }
     }
     return false
+}
+fun is_atom(v: MalValue): bool {
+    match (v) {
+        MalValue::Atom(a) {
+            return true
+        }
+    }
+    return false
+}
+fun get_atom(v: MalValue): *MalValue {
+    match (v) {
+        MalValue::Atom(a) {
+            return a
+        }
+    }
+    error("Called get_atom on not an atom")
 }
 fun is_truthy(v: MalValue): bool {
     match (v) {
@@ -498,8 +561,12 @@ fun pr_str(v: MalValue, print_readably: bool): str {
                 if (i != 0) {
                     to_ret += " "
                 }
-                to_ret += m.keys[i]
-                to_ret += str(": ")
+                if m.keys[i].length() > 0 && m.keys[i][0] == ':' {
+                    to_ret += m.keys[i]
+                } else {
+                    to_ret += str("\"") +  m.keys[i] + str("\"")
+                }
+                to_ret += str(" ")
                 to_ret += pr_str(m.values[i], print_readably)
             }
             return to_ret + "}"
@@ -537,6 +604,9 @@ fun pr_str(v: MalValue, print_readably: bool): str {
         }
         MalValue::Function(f) {
             return str("function")
+        }
+        MalValue::Atom(a) {
+            return str("(atom ") + pr_str(*a, print_readably) + ")"
         }
         MalValue::True() {
             return str("true")
@@ -678,10 +748,10 @@ fun EVAL(env: *Env, ast: MalValue): MalResult {
                     if l.size != 3 {
                         return MalResult::Err(str("fn* needs 2 children"))
                     }
-                    if (!is_list(l[1])) {
+                    if (!is_list_or_vec(l[1])) {
                         return MalResult::Err(str("fn* without list of parameters"))
                     }
-                    var parameters = get_list(l[1])
+                    var parameters = get_list_or_vec(l[1])
                     var parameters_str = vec<str>()
                     var is_variadic = false
                     for (var i = 0; i < parameters.size; i++;) {
@@ -913,11 +983,87 @@ fun main(argc: int, argv: **char): int {
         println(print_wrapper(params, " ", false))
         return MalResult::Ok(MalValue::Nil())
     }));
+    env->set(str("read-string"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 || !is_string(params[0]) {
+            return MalResult::Err(str("read-string with not a single string"))
+        } else {
+            return read_str(get_string(params[0]))
+        }
+    }));
+    env->set(str("slurp"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 || !is_string(params[0]) {
+            return MalResult::Err(str("slurp with not a single string"))
+        } else {
+            return MalResult::Ok(MalValue::String(read_file(get_string(params[0]))))
+        }
+    }));
+    env->set(str("eval"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 {
+            return MalResult::Err(str("eval with wrong number of params"))
+        } else {
+            return EVAL(env, params[0])
+        }
+    }));
+    env->set(str("atom"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 {
+            return MalResult::Err(str("atom with wrong number of params"))
+        } else {
+            var atom = new<MalValue>()
+            atom->copy_construct(&params[0])
+            return MalResult::Ok(MalValue::Atom(atom))
+        }
+    }));
+    env->set(str("atom?"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 {
+            return MalResult::Err(str("atom? with wrong number of params"))
+        } else {
+            return MalResult::Ok(bool_to_MalValue(is_atom(params[0])))
+        }
+    }));
+    env->set(str("deref"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 || !is_atom(params[0]) {
+            return MalResult::Err(str("deref called with wrong number of params or not an atom"))
+        } else {
+            return MalResult::Ok(*get_atom(params[0]))
+        }
+    }));
+    env->set(str("reset!"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 2 || !is_atom(params[0]) {
+            return MalResult::Err(str("reset! called with wrong number of params or first not an atom"))
+        } else {
+            var tmp = params[1]
+            *get_atom(params[0]) = tmp
+            return MalResult::Ok(params[1])
+        }
+    }));
+    env->set(str("swap!"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size < 2 || !is_atom(params[0]) {
+            return MalResult::Err(str("swap! called with wrong number of params or first not an atom"))
+        } else {
+            var call = vec(params[1], *get_atom(params[0])) + params.slice(2,-1)
+            var mid = EVAL(env, MalValue::List(call))
+            if !is_err(mid) {
+                *get_atom(params[0]) = get_value(mid)
+            }
+            return mid
+        }
+    }));
     rep(env, str("(def! not (fn* (a) (if a false true)))"))
-    while (true) {
-        var line = get_line(str("user> "), 1024)
-        if (line.length() == 0)
-            break
-        println(rep(env, line))
+    println(rep(env, str("(def! load-file (fn* (f) (eval (read-string (str \"(do \" (slurp f) \" \\nnil)\")))))")))
+    var params = vec<MalValue>()
+    if argc > 1 {
+        for (var i = 2; i < argc; i++;) {
+            params.add(MalValue::String(str(argv[i])))
+        }
+        env->set(str("*ARGV*"), MalValue::List(params))
+        println(rep(env, str("(load-file \"") + argv[1] + "\")"))
+    } else {
+        env->set(str("*ARGV*"), MalValue::List(params))
+        while (true) {
+            var line = get_line(str("user> "), 1024)
+            if (line.length() == 0)
+                break
+            println(rep(env, line))
+        }
     }
 }
