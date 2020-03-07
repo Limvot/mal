@@ -398,6 +398,10 @@ fun bool_to_MalValue(b: bool): MalValue {
     }
 }
 
+fun is_pair(v: MalValue): bool {
+    return is_list(v) && get_list(v).size > 0
+}
+
 obj Env (Object) {
     var data: map<str, MalValue>
     var outer: *Env
