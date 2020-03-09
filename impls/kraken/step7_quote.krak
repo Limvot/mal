@@ -73,6 +73,34 @@ fun read_form(tokens: *vec<str>, i: *int): MalResult {
             return inner
         }
         return MalResult::Ok(MalValue::List(vec(MalValue::Symbol(str("deref")), get_value(inner))))
+    } else if ((*tokens)[*i] == "'") {
+        (*i)++;
+        var inner = read_form(tokens, i)
+        if (is_err(inner)) {
+            return inner
+        }
+        return MalResult::Ok(MalValue::List(vec(MalValue::Symbol(str("quote")), get_value(inner))))
+    } else if ((*tokens)[*i] == "`") {
+        (*i)++;
+        var inner = read_form(tokens, i)
+        if (is_err(inner)) {
+            return inner
+        }
+        return MalResult::Ok(MalValue::List(vec(MalValue::Symbol(str("quasiquote")), get_value(inner))))
+    } else if ((*tokens)[*i] == "~") {
+        (*i)++;
+        var inner = read_form(tokens, i)
+        if (is_err(inner)) {
+            return inner
+        }
+        return MalResult::Ok(MalValue::List(vec(MalValue::Symbol(str("unquote")), get_value(inner))))
+    } else if ((*tokens)[*i] == "~@") {
+        (*i)++;
+        var inner = read_form(tokens, i)
+        if (is_err(inner)) {
+            return inner
+        }
+        return MalResult::Ok(MalValue::List(vec(MalValue::Symbol(str("splice-unquote")), get_value(inner))))
     } else {
         return read_atom(tokens, i)
     }
@@ -227,6 +255,7 @@ fun equals_MalValue(a: MalValue, b: MalValue): bool {
             }
             return true
        } } }
+       MalValue::String(d) { match (b) { MalValue::String(db) { return d == db; } } }
        MalValue::Int(d) { match (b) { MalValue::Int(db) { return d == db; } } }
        MalValue::Symbol(d) { match (b) { MalValue::Symbol(db) { return d == db; } } }
        MalValue::Keyword(d) { match (b) { MalValue::Keyword(db) { return d == db; } } }
@@ -399,7 +428,24 @@ fun bool_to_MalValue(b: bool): MalValue {
 }
 
 fun is_pair(v: MalValue): bool {
-    return is_list(v) && get_list(v).size > 0
+    return is_list_or_vec(v) && get_list_or_vec(v).size > 0
+}
+
+fun quasiquote(ast: MalValue): MalValue {
+    if !is_pair(ast) {
+        return MalValue::List(vec(MalValue::Symbol(str("quote")), ast))
+    } else {
+        var ast_list = get_list_or_vec(ast)
+        if is_symbol(ast_list[0], "unquote") {
+            return ast_list[1]
+        } else {
+            if is_pair(ast_list[0]) && is_symbol(get_list_or_vec(ast_list[0])[0], "splice-unquote") {
+                return MalValue::List(vec(MalValue::Symbol(str("concat")), get_list_or_vec(ast_list[0])[1], quasiquote(MalValue::List(ast_list.slice(1,-1)))))
+            } else {
+                return MalValue::List(vec(MalValue::Symbol(str("cons")), quasiquote(ast_list[0]), quasiquote(MalValue::List(ast_list.slice(1,-1)))))
+            }
+        }
+    }
 }
 
 obj Env (Object) {
@@ -783,6 +829,13 @@ fun EVAL(env: *Env, ast: MalValue): MalResult {
                         return MalResult::Err(str("quote with no arguments"))
                     }
                     return MalResult::Ok(l[1])
+                } else if (is_symbol(l[0], "quasiquote")) {
+                    if l.size == 1 {
+                        return MalResult::Err(str("quasiquote with no arguments"))
+                    }
+                    var tmp = quasiquote(l[1])
+                    ast = tmp
+                    continue
                 } else {
                     var mid = eval_ast(env, ast)
                     if is_err(mid) {
@@ -1058,19 +1111,19 @@ fun main(argc: int, argv: **char): int {
         }
     }));
     env->set(str("cons"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
-        if params.size != 2 || !is_list(params[1]) {
-            return MalResult::Err(str("cons called with wrong number of params or second not an list"))
+        if params.size != 2 || !is_list_or_vec(params[1]) {
+            return MalResult::Err(str("cons called with wrong number of params or second not an list/vec"))
         } else {
-            return MalResult::Ok(MalValue::List(vec(params[0]) + get_list(params[1])))
+            return MalResult::Ok(MalValue::List(vec(params[0]) + get_list_or_vec(params[1])))
         }
     }));
     env->set(str("concat"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
         var to_ret = vec<MalValue>()
         for (var i = 0; i < params.size; i++;) {
-            if !is_list(params[i]) {
+            if !is_list_or_vec(params[i]) {
                 return MalResult::Err(str("concat called with not an list"))
             }
-            to_ret += get_list(params[i])
+            to_ret += get_list_or_vec(params[i])
         }
         return MalResult::Ok(MalValue::List(to_ret))
     }));
