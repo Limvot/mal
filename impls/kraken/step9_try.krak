@@ -106,32 +106,52 @@ fun read_form(tokens: *vec<str>, i: *int): MalResult {
     }
 }
 fun read_dict(tokens: *vec<str>, i: *int): MalResult {
-    var to_ret = map<str,MalValue>()
     (*i)++;
+    var values = vec<MalValue>()
     while (*i < tokens->size && (*tokens)[*i] != "}") {
-        var key_result = read_form(tokens, i)
-        if (is_err(key_result)) {
-            return key_result
+        var result = read_form(tokens, i)
+        if (is_err(result)) {
+            return result
         }
-        var key_value = get_value(key_result)
-        if !is_keyword_or_string(key_value) {
-            return MalResult::Err(MalValue::String(str("Key is not keyword or string")))
-        }
-        var key_str = get_keyword_or_string_text(key_value)
-        if (*i == tokens->size) {
-            return MalResult::Err(MalValue::String(str("no matching value for key")))
-        }
-        var value_result = read_form(tokens, i)
-        if (is_err(value_result)) {
-            return value_result
-        }
-        to_ret.set(key_str, get_value(value_result))
+        values.add(get_value(result))
     }
     if (*i == tokens->size) {
         return MalResult::Err(MalValue::String(str("unmatched {")))
     }
     (*i)++;
+    return create_map(values)
+}
+fun create_map(values: vec<MalValue>): MalResult {
+    var to_ret = map<MalValue,MalValue>()
+    if values.size & 1 == 1 {
+        return MalResult::Err(MalValue::String(str("odd number of keys/values")))
+    }
+    for (var i = 0; i < values.size; i+=2;) {
+        to_ret.set(values[i], values[i+1])
+    }
     return MalResult::Ok(MalValue::Map(to_ret))
+}
+fun is_map(m: MalValue): bool {
+    match (m) {
+        MalValue::Map(m) {
+            return true
+        }
+        MalValue::Nil() {
+            return true
+        }
+    }
+    return false
+}
+fun get_map(m: MalValue): map<MalValue, MalValue> {
+    match (m) {
+        MalValue::Map(m) {
+            return m
+        }
+        MalValue::Nil() {
+            return map<MalValue, MalValue>()
+        }
+    }
+    error("can't get_map not a map")
 }
 fun read_list(tokens: *vec<str>, i: *int, is_vec: bool): MalResult {
     var to_ret = vec<MalValue>()
@@ -191,7 +211,7 @@ fun read_atom(tokens: *vec<str>, i: *int): MalResult {
         }
         return MalResult::Ok(MalValue::String(to_ret))
     } else if (token[0] == ':') {
-        return MalResult::Ok(MalValue::Keyword(token))
+        return MalResult::Ok(MalValue::Keyword(token.slice(1,-1)))
     } else {
         return MalResult::Ok(MalValue::Symbol(token))
     }
@@ -215,7 +235,7 @@ adt MalValue {
     Keyword: str,
     List: vec<MalValue>,
     Vector: vec<MalValue>,
-    Map: map<str, MalValue>,
+    Map: map<MalValue, MalValue>,
     Function: MalFunction,
     BuiltinFunction: MalBuiltinFunction,
     Atom: *MalValue
@@ -268,6 +288,14 @@ fun equals_MalValue(a: MalValue, b: MalValue): bool {
     }
     return false
 }
+fun is_keyword(v: MalValue): bool {
+    match (v) {
+        MalValue::Keyword(k) {
+            return true
+        }
+    }
+    return false
+}
 fun is_keyword_or_string(v: MalValue): bool {
     match (v) {
         MalValue::Keyword(k) {
@@ -305,6 +333,14 @@ fun get_list(v: MalValue): vec<MalValue> {
         }
     }
     error("Tried to get list on not a list")
+}
+fun is_vector(v: MalValue): bool {
+    match (v) {
+        MalValue::Vector(v) {
+            return true
+        }
+    }
+    return false
 }
 fun is_list_or_vec(v: MalValue): bool {
     match (v) {
@@ -702,11 +738,7 @@ fun pr_str(v: MalValue, print_readably: bool): str {
                 if (i != 0) {
                     to_ret += " "
                 }
-                if m.keys[i].length() > 0 && m.keys[i][0] == ':' {
-                    to_ret += m.keys[i]
-                } else {
-                    to_ret += str("\"") +  m.keys[i] + str("\"")
-                }
+                to_ret += pr_str(m.keys[i], print_readably)
                 to_ret += str(" ")
                 to_ret += pr_str(m.values[i], print_readably)
             }
@@ -791,7 +823,7 @@ fun eval_ast(env: *Env, ast: MalValue): MalResult {
             return MalResult::Ok(MalValue::Vector(to_ret))
         }
         MalValue::Map(l) {
-            var to_ret = map<str, MalValue>()
+            var to_ret = map<MalValue, MalValue>()
             for (var i = 0; i < l.keys.size; i++;) {
                 var mid = EVAL(env, l.values[i])
                 if is_err(mid) {
@@ -961,15 +993,15 @@ fun EVAL(env: *Env, ast: MalValue): MalResult {
                     }
                     return macroexpand(l[1], env)
                 } else if (is_symbol(l[0], "try*")) {
-                    if l.size != 3 || !is_list(l[2]) {
+                    if l.size != 2 && (l.size != 3 || !is_list(l[2])) {
                         return MalResult::Err(MalValue::String(str("try* wrong arguments")))
                     }
-                    var catch = get_list(l[2])
-                    if catch.size != 3 || !is_symbol(catch[0], "catch*") || !is_symbol(catch[1]) {
-                        return MalResult::Err(MalValue::String(str("catch* block malformed")))
-                    }
                     var A = EVAL(env, l[1])
-                    if is_err(A) {
+                    if l.size == 3 && is_err(A) {
+                        var catch = get_list(l[2])
+                        if catch.size != 3 || !is_symbol(catch[0], "catch*") || !is_symbol(catch[1]) {
+                            return MalResult::Err(MalValue::String(str("catch* block malformed")))
+                        }
                         var new_env = new<Env>()->construct(env)
                         env->set(get_symbol_text(catch[1]), get_err(A))
                         return EVAL(new_env, catch[2])
@@ -1301,18 +1333,18 @@ fun main(argc: int, argv: **char): int {
         }
     }));
     env->set(str("apply"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
-        if params.size < 2 || !is_list(params[params.size-1]) {
+        if params.size < 2 || !is_list_or_vec(params[params.size-1]) {
             return MalResult::Err(MalValue::String(str("apply called with wrong number or type of params")))
         } else {
-        var inner_params = params.slice(1,-2) + get_list(params[params.size-1])
+        var inner_params = params.slice(1,-2) + get_list_or_vec(params[params.size-1])
         return function_call(env, params[0], inner_params)
         }
     }));
     env->set(str("map"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
-        if params.size != 2 || !is_list(params[1]) {
+        if params.size != 2 || !is_list_or_vec(params[1]) {
             return MalResult::Err(MalValue::String(str("map called with wrong number or type of params")))
         } else {
-            var l = get_list(params[1])
+            var l = get_list_or_vec(params[1])
             var to_ret = vec<MalValue>()
             for (var i = 0; i < l.size; i++;) {
                 var mid = function_call(env, params[0], vec(l[i]))
@@ -1329,6 +1361,129 @@ fun main(argc: int, argv: **char): int {
             return MalResult::Err(MalValue::String(str("symbol? called with wrong number of params")))
         } else {
             return MalResult::Ok(bool_to_MalValue(is_symbol(params[0])))
+        }
+    }));
+    env->set(str("symbol"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 || !is_string(params[0]) {
+            return MalResult::Err(MalValue::String(str("symbol called with wrong number or type of params")))
+        } else {
+            return MalResult::Ok(MalValue::Symbol(get_string(params[0])))
+        }
+    }));
+    env->set(str("keyword?"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 {
+            return MalResult::Err(MalValue::String(str("keyword? called with wrong number of params")))
+        } else {
+            return MalResult::Ok(bool_to_MalValue(is_keyword(params[0])))
+        }
+    }));
+    env->set(str("keyword"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 || !is_keyword_or_string(params[0]) {
+            return MalResult::Err(MalValue::String(str("keyword called with wrong number or type of params")))
+        } else {
+            return MalResult::Ok(MalValue::Keyword(get_keyword_or_string_text(params[0])))
+        }
+    }));
+    env->set(str("vector"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        return MalResult::Ok(MalValue::Vector(params))
+    }));
+    env->set(str("vector?"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 {
+            return MalResult::Err(MalValue::String(str("vector? called with wrong number of params")))
+        } else {
+            return MalResult::Ok(bool_to_MalValue(is_vector(params[0])))
+        }
+    }));
+    env->set(str("sequential?"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 {
+            return MalResult::Err(MalValue::String(str("sequential? called with wrong number of params")))
+        } else if is_nil(params[0]) {
+            return MalResult::Ok(MalValue::False())
+        } else {
+            return MalResult::Ok(bool_to_MalValue(is_list_or_vec(params[0])))
+        }
+    }));
+    env->set(str("hash-map"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        return create_map(params)
+    }));
+    env->set(str("map?"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 {
+            return MalResult::Err(MalValue::String(str("map? called with wrong number of params")))
+        } else {
+            return MalResult::Ok(bool_to_MalValue(is_map(params[0])))
+        }
+    }));
+    env->set(str("assoc"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size & 1 != 1 || !is_map(params[0]) {
+            return MalResult::Err(MalValue::String(str("assoc? called with wrong number or type of params")))
+        } else {
+            var base = get_map(params[0])
+            var new = create_map(params.slice(1,-1))
+            if is_err(new) {
+                return new
+            }
+            var new_map = get_map(get_value(new))
+            for (var i = 0; i < new_map.keys.size; i++;) {
+                base.set(new_map.keys[i], new_map.values[i])
+            }
+            return MalResult::Ok(MalValue::Map(base))
+        }
+    }));
+    env->set(str("dissoc"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size < 2 || !is_map(params[0]) {
+            return MalResult::Err(MalValue::String(str("dissoc? called with wrong number or type of params")))
+        } else {
+            var base = get_map(params[0])
+            var remove = vec<MalValue>()
+            if params.size != 2 || !is_list(params[1]) {
+                remove = params.slice(1,-1)
+            } else {
+                remove = get_list(params[1])
+            }
+            for (var i = 0; i < remove.size; i++;) {
+                if base.contains_key(remove[i]) {
+                    base.remove(remove[i])
+                }
+            }
+            return MalResult::Ok(MalValue::Map(base))
+        }
+    }));
+    env->set(str("get"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 2 || !is_map(params[0]) || !is_keyword_or_string(params[1]) {
+            return MalResult::Err(MalValue::String(str("get called with wrong number or type of params")))
+        } else {
+            var base = get_map(params[0])
+            if base.contains_key(params[1]) {
+                return MalResult::Ok(base.get(params[1]))
+            } else {
+                return MalResult::Ok(MalValue::Nil())
+            }
+        }
+    }));
+    env->set(str("contains?"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 2 || !is_map(params[0]) || !is_keyword_or_string(params[1]) {
+            return MalResult::Err(MalValue::String(str("contains? called with wrong number or type of params")))
+        } else {
+            var base = get_map(params[0])
+            if base.contains_key(params[1]) {
+                return MalResult::Ok(MalValue::True())
+            } else {
+                return MalResult::Ok(MalValue::False())
+            }
+        }
+    }));
+    env->set(str("keys"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 || !is_map(params[0]) {
+            return MalResult::Err(MalValue::String(str("keys called with wrong number or type of params")))
+        } else {
+            return MalResult::Ok(MalValue::List(get_map(params[0]).keys))
+        }
+    }));
+    env->set(str("vals"), make_builtin_function(fun(params: vec<MalValue>): MalResult {
+        if params.size != 1 || !is_map(params[0]) {
+            return MalResult::Err(MalValue::String(str("vals called with wrong number or type of params")))
+        } else {
+            return MalResult::Ok(MalValue::List(get_map(params[0]).values))
         }
     }));
     rep(env, str("(def! not (fn* (a) (if a false true)))"))
